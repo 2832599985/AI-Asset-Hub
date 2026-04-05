@@ -1,6 +1,6 @@
 # AI Proxy API
 
-A self-hosted reverse proxy that exposes a unified API for OpenAI and Anthropic models, with Bearer token authentication.
+A self-hosted reverse proxy built on Replit that exposes a unified API for OpenAI and Anthropic models, with Bearer token authentication. **Requires Replit AI Integrations — no external API keys needed.**
 
 ## Features
 
@@ -11,50 +11,19 @@ A self-hosted reverse proxy that exposes a unified API for OpenAI and Anthropic 
 - Extended Thinking / reasoning support for Claude models
 - Streaming support for all endpoints
 
-## Deployment
+## Deployment (Replit only)
 
-### Option A — Replit (Recommended, no API keys needed)
-
-1. **Fork** this project on Replit
+1. **Fork** this project to your Replit account
 2. Go to **Tools → Integrations** and enable:
    - **OpenAI** integration
    - **Anthropic** integration
 3. Go to **Tools → Secrets** and add:
-   - `PROXY_API_KEY` = any secret string you choose (this is what clients use to authenticate)
+   - `PROXY_API_KEY` = any secret string you choose (clients use this to authenticate)
 4. Click **Deploy**
 
 Replit AI Integrations handle billing through your Replit Credits — no separate OpenAI or Anthropic API keys needed.
 
----
-
-### Option B — Any Platform (VPS, Railway, Fly.io, Docker, etc.)
-
-Set the following environment variables:
-
-```env
-# Required — your chosen auth token for clients
-PROXY_API_KEY=your-secret-token-here
-
-# OpenAI
-OPENAI_API_KEY=sk-...
-# Optional: only set if using a custom OpenAI-compatible endpoint
-# OPENAI_BASE_URL=https://api.openai.com/v1
-
-# Anthropic
-ANTHROPIC_API_KEY=sk-ant-...
-# Optional: only set if using a custom Anthropic-compatible endpoint
-# ANTHROPIC_BASE_URL=https://api.anthropic.com
-```
-
-Then run:
-
-```bash
-pnpm install
-pnpm --filter @workspace/api-server run dev   # development
-pnpm --filter @workspace/api-server run build  # production build
-```
-
-The server listens on the `PORT` environment variable (default: 3000).
+> If either integration or the PROXY_API_KEY secret is missing, the server will refuse to start and print a clear error message explaining exactly what to add.
 
 ---
 
