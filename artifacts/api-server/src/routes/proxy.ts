@@ -286,16 +286,24 @@ function addCacheControl<T extends Record<string, unknown>>(block: T): T {
 }
 
 function applyPromptCaching(
-  system: string | undefined,
+  system: string | Anthropic.TextBlockParam[] | undefined,
   messages: Anthropic.MessageParam[],
 ): {
   system: Anthropic.TextBlockParam[] | undefined;
   messages: Anthropic.MessageParam[];
 } {
-  // Cache system prompt
-  const cachedSystem: Anthropic.TextBlockParam[] | undefined = system
-    ? [{ type: "text", text: system, cache_control: { type: "ephemeral" } }]
-    : undefined;
+  // Cache system prompt — handle both string and TextBlockParam[] input
+  let cachedSystem: Anthropic.TextBlockParam[] | undefined;
+  if (!system) {
+    cachedSystem = undefined;
+  } else if (typeof system === "string") {
+    cachedSystem = [{ type: "text", text: system, cache_control: { type: "ephemeral" } }];
+  } else {
+    // Already an array — add cache_control to the last block only
+    const arr = [...system];
+    arr[arr.length - 1] = addCacheControl(arr[arr.length - 1] as Record<string, unknown>) as Anthropic.TextBlockParam;
+    cachedSystem = arr;
+  }
 
   // Cache all messages except the last 2 (current exchange is always new)
   const cacheUpTo = Math.max(0, messages.length - 2);
@@ -640,7 +648,7 @@ router.post("/messages", async (req: Request, res: Response) => {
   const model = (body.model as string) ?? "claude-sonnet-4-6";
   const stream = body.stream === true;
   const messages = (body.messages as AnyMessage[]) ?? [];
-  const system = body.system as string | undefined;
+  const system = body.system as string | Anthropic.TextBlockParam[] | undefined;
   const tools = body.tools as AnthropicTool[] | undefined;
   const toolChoice = body.tool_choice;
   const maxTokens = (body.max_tokens as number | undefined) ?? 8192;
