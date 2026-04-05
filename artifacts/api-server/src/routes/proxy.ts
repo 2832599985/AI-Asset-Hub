@@ -288,6 +288,27 @@ function addCacheControl<T extends Record<string, unknown>>(block: T): T {
 // Anthropic allows at most 4 cache_control markers per request
 const MAX_CACHE_POINTS = 4;
 
+function countExistingCachePoints(
+  system: string | Anthropic.TextBlockParam[] | undefined,
+  messages: Anthropic.MessageParam[],
+): number {
+  let count = 0;
+  if (Array.isArray(system)) {
+    for (const block of system) {
+      if ((block as Record<string, unknown>).cache_control) count++;
+    }
+  }
+  for (const msg of messages) {
+    const content = msg.content;
+    if (Array.isArray(content)) {
+      for (const block of content) {
+        if ((block as Record<string, unknown>).cache_control) count++;
+      }
+    }
+  }
+  return count;
+}
+
 function applyPromptCaching(
   system: string | Anthropic.TextBlockParam[] | undefined,
   messages: Anthropic.MessageParam[],
@@ -295,33 +316,44 @@ function applyPromptCaching(
   system: Anthropic.TextBlockParam[] | undefined;
   messages: Anthropic.MessageParam[];
 } {
-  let pointsUsed = 0;
+  // Count how many cache_control markers the client already sent
+  const alreadyUsed = countExistingCachePoints(system, messages);
+  let pointsUsed = alreadyUsed;
 
-  // Cache system prompt — handle both string and TextBlockParam[] input
+  // Cache system prompt only if budget allows and it's not already cached
   let cachedSystem: Anthropic.TextBlockParam[] | undefined;
+  const systemAlreadyCached =
+    Array.isArray(system) && system.some((b) => (b as Record<string, unknown>).cache_control);
+
   if (!system) {
     cachedSystem = undefined;
-  } else if (typeof system === "string") {
-    cachedSystem = [{ type: "text", text: system, cache_control: { type: "ephemeral" } }];
+  } else if (systemAlreadyCached) {
+    // Already has cache_control — pass through unchanged
+    cachedSystem = system as Anthropic.TextBlockParam[];
+  } else if (pointsUsed < MAX_CACHE_POINTS) {
+    if (typeof system === "string") {
+      cachedSystem = [{ type: "text", text: system, cache_control: { type: "ephemeral" } }];
+    } else {
+      const arr = [...system];
+      arr[arr.length - 1] = addCacheControl(arr[arr.length - 1] as Record<string, unknown>) as Anthropic.TextBlockParam;
+      cachedSystem = arr;
+    }
     pointsUsed++;
   } else {
-    const arr = [...system];
-    arr[arr.length - 1] = addCacheControl(arr[arr.length - 1] as Record<string, unknown>) as Anthropic.TextBlockParam;
-    cachedSystem = arr;
-    pointsUsed++;
+    // No budget left — pass system through as array without adding cache_control
+    cachedSystem = typeof system === "string"
+      ? [{ type: "text", text: system }]
+      : (system as Anthropic.TextBlockParam[]);
   }
 
-  // Cache up to (MAX_CACHE_POINTS - pointsUsed) messages from history.
-  // Pick evenly-spaced indices within the cacheable range (all except last 2).
+  // Cache up to remaining budget from message history (skip last 2 = current exchange)
   const remainingPoints = MAX_CACHE_POINTS - pointsUsed;
   const cacheUpTo = Math.max(0, messages.length - 2);
 
-  // Choose which message indices to mark — spread evenly across cacheable range
   const indicesToCache = new Set<number>();
   if (remainingPoints > 0 && cacheUpTo > 0) {
     const count = Math.min(remainingPoints, cacheUpTo);
     for (let k = 0; k < count; k++) {
-      // Pick from the end of cacheable range so recent history is cached first
       const idx = cacheUpTo - 1 - Math.floor((k * cacheUpTo) / count);
       indicesToCache.add(idx);
     }
