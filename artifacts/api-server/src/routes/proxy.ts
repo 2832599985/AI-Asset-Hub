@@ -285,6 +285,9 @@ function addCacheControl<T extends Record<string, unknown>>(block: T): T {
   return { ...block, cache_control: { type: "ephemeral" } as CacheControl };
 }
 
+// Anthropic allows at most 4 cache_control markers per request
+const MAX_CACHE_POINTS = 4;
+
 function applyPromptCaching(
   system: string | Anthropic.TextBlockParam[] | undefined,
   messages: Anthropic.MessageParam[],
@@ -292,30 +295,45 @@ function applyPromptCaching(
   system: Anthropic.TextBlockParam[] | undefined;
   messages: Anthropic.MessageParam[];
 } {
+  let pointsUsed = 0;
+
   // Cache system prompt — handle both string and TextBlockParam[] input
   let cachedSystem: Anthropic.TextBlockParam[] | undefined;
   if (!system) {
     cachedSystem = undefined;
   } else if (typeof system === "string") {
     cachedSystem = [{ type: "text", text: system, cache_control: { type: "ephemeral" } }];
+    pointsUsed++;
   } else {
-    // Already an array — add cache_control to the last block only
     const arr = [...system];
     arr[arr.length - 1] = addCacheControl(arr[arr.length - 1] as Record<string, unknown>) as Anthropic.TextBlockParam;
     cachedSystem = arr;
+    pointsUsed++;
   }
 
-  // Cache all messages except the last 2 (current exchange is always new)
+  // Cache up to (MAX_CACHE_POINTS - pointsUsed) messages from history.
+  // Pick evenly-spaced indices within the cacheable range (all except last 2).
+  const remainingPoints = MAX_CACHE_POINTS - pointsUsed;
   const cacheUpTo = Math.max(0, messages.length - 2);
+
+  // Choose which message indices to mark — spread evenly across cacheable range
+  const indicesToCache = new Set<number>();
+  if (remainingPoints > 0 && cacheUpTo > 0) {
+    const count = Math.min(remainingPoints, cacheUpTo);
+    for (let k = 0; k < count; k++) {
+      // Pick from the end of cacheable range so recent history is cached first
+      const idx = cacheUpTo - 1 - Math.floor((k * cacheUpTo) / count);
+      indicesToCache.add(idx);
+    }
+  }
+
   const cachedMessages = messages.map((msg, i) => {
-    if (i >= cacheUpTo) return msg;
+    if (!indicesToCache.has(i)) return msg;
     const content = msg.content;
     if (typeof content === "string") {
       return {
         ...msg,
-        content: [
-          addCacheControl({ type: "text" as const, text: content }),
-        ],
+        content: [addCacheControl({ type: "text" as const, text: content })],
       };
     }
     if (Array.isArray(content) && content.length > 0) {
