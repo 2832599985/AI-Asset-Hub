@@ -4,15 +4,35 @@ import Anthropic from "@anthropic-ai/sdk";
 
 const router: IRouter = Router();
 
+// ─── Client initialisation ────────────────────────────────────────────────────
+// Supports two deployment modes:
+//   1. Replit AI Integrations  → AI_INTEGRATIONS_OPENAI_* / AI_INTEGRATIONS_ANTHROPIC_* (auto-provisioned)
+//   2. Standard API keys       → OPENAI_API_KEY / OPENAI_BASE_URL / ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL
+
 const openai = new OpenAI({
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY ?? "dummy",
+  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL ?? process.env.OPENAI_BASE_URL,
+  apiKey:
+    process.env.AI_INTEGRATIONS_OPENAI_API_KEY ??
+    process.env.OPENAI_API_KEY ??
+    "dummy",
 });
 
 const anthropic = new Anthropic({
-  baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
-  apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY ?? "dummy",
+  baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL ?? process.env.ANTHROPIC_BASE_URL,
+  apiKey:
+    process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY ??
+    process.env.ANTHROPIC_API_KEY ??
+    "dummy",
 });
+
+const usingReplitIntegrations =
+  !!(process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY);
+
+console.log(
+  usingReplitIntegrations
+    ? "[proxy] Mode: Replit AI Integrations (no external API keys needed)"
+    : "[proxy] Mode: Standard API keys (OPENAI_API_KEY / ANTHROPIC_API_KEY)",
+);
 
 const OPENAI_MODELS = [
   { id: "gpt-5.2", provider: "openai" },
