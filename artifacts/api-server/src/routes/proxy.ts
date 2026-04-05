@@ -256,6 +256,51 @@ function anthropicMessagesToOpenAI(messages: AnyMessage[]): AnyMessage[] {
   return converted;
 }
 
+// ─── Prompt caching helper ────────────────────────────────────────────────────
+
+type CacheControl = { type: "ephemeral" };
+
+function addCacheControl<T extends Record<string, unknown>>(block: T): T {
+  if ((block as Record<string, unknown>).cache_control) return block;
+  return { ...block, cache_control: { type: "ephemeral" } as CacheControl };
+}
+
+function applyPromptCaching(
+  system: string | undefined,
+  messages: Anthropic.MessageParam[],
+): {
+  system: Anthropic.TextBlockParam[] | undefined;
+  messages: Anthropic.MessageParam[];
+} {
+  // Cache system prompt
+  const cachedSystem: Anthropic.TextBlockParam[] | undefined = system
+    ? [{ type: "text", text: system, cache_control: { type: "ephemeral" } }]
+    : undefined;
+
+  // Cache all messages except the last 2 (current exchange is always new)
+  const cacheUpTo = Math.max(0, messages.length - 2);
+  const cachedMessages = messages.map((msg, i) => {
+    if (i >= cacheUpTo) return msg;
+    const content = msg.content;
+    if (typeof content === "string") {
+      return {
+        ...msg,
+        content: [
+          addCacheControl({ type: "text" as const, text: content }),
+        ],
+      };
+    }
+    if (Array.isArray(content) && content.length > 0) {
+      const arr = [...content] as Array<Record<string, unknown>>;
+      arr[arr.length - 1] = addCacheControl(arr[arr.length - 1]);
+      return { ...msg, content: arr as Anthropic.MessageParam["content"] };
+    }
+    return msg;
+  });
+
+  return { system: cachedSystem, messages: cachedMessages };
+}
+
 // ─── Response conversion helpers ─────────────────────────────────────────────
 
 function anthropicResponseToOpenAI(
@@ -434,16 +479,19 @@ router.post("/chat/completions", async (req: Request, res: Response) => {
 
     // ── Anthropic path ──
     if (isAnthropicModel(model)) {
-      const { system, messages: anthropicMessages } = openaiMessagesToAnthropic(messages);
+      const { system: rawSystem, messages: rawAnthropicMessages } = openaiMessagesToAnthropic(messages);
       const anthropicTools = tools ? tools.map(openaiToolToAnthropic) : undefined;
       const anthropicToolChoice = openaiToolChoiceToAnthropic(toolChoice);
+
+      // Auto prompt caching: reduces token cost for repeated context
+      const { system: cachedSystem, messages: anthropicMessages } = applyPromptCaching(rawSystem, rawAnthropicMessages);
 
       const thinking = body.thinking as Anthropic.MessageCreateParams["thinking"] | undefined;
       const anthropicParams: Anthropic.MessageCreateParams = {
         model,
         max_tokens: maxTokens,
         messages: anthropicMessages,
-        ...(system ? { system } : {}),
+        ...(cachedSystem ? { system: cachedSystem } : {}),
         ...(anthropicTools ? { tools: anthropicTools } : {}),
         ...(anthropicToolChoice ? { tool_choice: anthropicToolChoice } : {}),
         ...(thinking ? { thinking } : {}),
@@ -581,11 +629,18 @@ router.post("/messages", async (req: Request, res: Response) => {
     // ── Claude model → direct Anthropic ──
     if (isAnthropicModel(model)) {
       const thinking = body.thinking as Anthropic.MessageCreateParams["thinking"] | undefined;
+
+      // Auto prompt caching: reduces token cost for repeated context
+      const { system: cachedSystem, messages: cachedMessages } = applyPromptCaching(
+        system,
+        messages as Anthropic.MessageParam[],
+      );
+
       const params: Anthropic.MessageCreateParams = {
         model,
         max_tokens: maxTokens,
-        messages: messages as Anthropic.MessageParam[],
-        ...(system ? { system } : {}),
+        messages: cachedMessages,
+        ...(cachedSystem ? { system: cachedSystem } : {}),
         ...(tools ? { tools } : {}),
         ...(toolChoice ? { tool_choice: toolChoice as Anthropic.MessageCreateParams["tool_choice"] } : {}),
         ...(thinking ? { thinking } : {}),
