@@ -265,10 +265,13 @@ function anthropicResponseToOpenAI(
   const choices: unknown[] = [];
   const toolCalls: unknown[] = [];
   let textContent = "";
+  let thinkingContent = "";
 
   for (const block of msg.content) {
     if (block.type === "text") {
       textContent += block.text;
+    } else if (block.type === "thinking") {
+      thinkingContent += (block as unknown as { thinking: string }).thinking;
     } else if (block.type === "tool_use") {
       toolCalls.push({
         id: block.id,
@@ -283,6 +286,9 @@ function anthropicResponseToOpenAI(
 
   const finishReason = msg.stop_reason === "tool_use" ? "tool_calls" : "stop";
   const message: Record<string, unknown> = { role: "assistant", content: textContent || null };
+  if (thinkingContent) {
+    message.reasoning_content = thinkingContent;
+  }
   if (toolCalls.length > 0) {
     message.tool_calls = toolCalls;
   }
@@ -432,6 +438,7 @@ router.post("/chat/completions", async (req: Request, res: Response) => {
       const anthropicTools = tools ? tools.map(openaiToolToAnthropic) : undefined;
       const anthropicToolChoice = openaiToolChoiceToAnthropic(toolChoice);
 
+      const thinking = body.thinking as Anthropic.MessageCreateParams["thinking"] | undefined;
       const anthropicParams: Anthropic.MessageCreateParams = {
         model,
         max_tokens: maxTokens,
@@ -439,6 +446,7 @@ router.post("/chat/completions", async (req: Request, res: Response) => {
         ...(system ? { system } : {}),
         ...(anthropicTools ? { tools: anthropicTools } : {}),
         ...(anthropicToolChoice ? { tool_choice: anthropicToolChoice } : {}),
+        ...(thinking ? { thinking } : {}),
       };
 
       if (stream) {
@@ -486,12 +494,14 @@ router.post("/chat/completions", async (req: Request, res: Response) => {
           for await (const event of anthropicStream) {
             if (event.type === "message_start") {
               messageId = event.message.id || messageId;
-              sendChunk({ role: "assistant", content: "" });
+              sendChunk({ role: "assistant", content: "", reasoning_content: "" });
             } else if (event.type === "content_block_start") {
               currentBlockIndex = event.index;
               const block = event.content_block;
               if (block.type === "text") {
                 currentBlockType = "text";
+              } else if (block.type === "thinking") {
+                currentBlockType = "thinking";
               } else if (block.type === "tool_use") {
                 currentBlockType = "tool_use";
                 currentToolId = block.id;
@@ -509,6 +519,8 @@ router.post("/chat/completions", async (req: Request, res: Response) => {
               const delta = event.delta;
               if (delta.type === "text_delta") {
                 sendChunk({ content: delta.text });
+              } else if (delta.type === "thinking_delta") {
+                sendChunk({ reasoning_content: (delta as unknown as { thinking: string }).thinking });
               } else if (delta.type === "input_json_delta") {
                 sendChunk({
                   tool_calls: [{
@@ -568,6 +580,7 @@ router.post("/messages", async (req: Request, res: Response) => {
   try {
     // ── Claude model → direct Anthropic ──
     if (isAnthropicModel(model)) {
+      const thinking = body.thinking as Anthropic.MessageCreateParams["thinking"] | undefined;
       const params: Anthropic.MessageCreateParams = {
         model,
         max_tokens: maxTokens,
@@ -575,6 +588,7 @@ router.post("/messages", async (req: Request, res: Response) => {
         ...(system ? { system } : {}),
         ...(tools ? { tools } : {}),
         ...(toolChoice ? { tool_choice: toolChoice as Anthropic.MessageCreateParams["tool_choice"] } : {}),
+        ...(thinking ? { thinking } : {}),
       };
 
       if (stream) {
