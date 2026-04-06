@@ -390,6 +390,36 @@ function applyPromptCaching(
   return { system: cachedSystem, messages: cachedMessages };
 }
 
+function stripCacheControlScope<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => stripCacheControlScope(item)) as T;
+  }
+
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const next: Record<string, unknown> = {};
+
+    for (const [key, child] of Object.entries(record)) {
+      if (
+        key === "cache_control" &&
+        child &&
+        typeof child === "object" &&
+        !Array.isArray(child)
+      ) {
+        const { scope: _scope, ...rest } = child as Record<string, unknown>;
+        next[key] = stripCacheControlScope(rest);
+        continue;
+      }
+
+      next[key] = stripCacheControlScope(child);
+    }
+
+    return next as T;
+  }
+
+  return value;
+}
+
 // ─── Response conversion helpers ─────────────────────────────────────────────
 
 function anthropicResponseToOpenAI(
@@ -585,6 +615,7 @@ router.post("/chat/completions", async (req: Request, res: Response) => {
         ...(anthropicToolChoice ? { tool_choice: anthropicToolChoice } : {}),
         ...(thinking ? { thinking } : {}),
       };
+      const sanitizedAnthropicParams = stripCacheControlScope(anthropicParams);
 
       if (stream) {
         res.setHeader("Content-Type", "text/event-stream");
@@ -626,7 +657,7 @@ router.post("/chat/completions", async (req: Request, res: Response) => {
         };
 
         try {
-          const anthropicStream = anthropic.messages.stream(anthropicParams);
+          const anthropicStream = anthropic.messages.stream(sanitizedAnthropicParams);
 
           for await (const event of anthropicStream) {
             if (event.type === "message_start") {
@@ -683,7 +714,7 @@ router.post("/chat/completions", async (req: Request, res: Response) => {
       }
 
       // Non-stream Anthropic — use stream().finalMessage() to avoid timeouts
-      const finalMsg = await anthropic.messages.stream(anthropicParams).finalMessage();
+      const finalMsg = await anthropic.messages.stream(sanitizedAnthropicParams).finalMessage();
       res.json(anthropicResponseToOpenAI(finalMsg, model));
       return;
     }
@@ -734,6 +765,7 @@ router.post("/messages", async (req: Request, res: Response) => {
         ...(toolChoice ? { tool_choice: toolChoice as Anthropic.MessageCreateParams["tool_choice"] } : {}),
         ...(thinking ? { thinking } : {}),
       };
+      const sanitizedParams = stripCacheControlScope(params);
 
       if (stream) {
         res.setHeader("Content-Type", "text/event-stream");
@@ -756,7 +788,7 @@ router.post("/messages", async (req: Request, res: Response) => {
         };
 
         try {
-          const anthropicStream = anthropic.messages.stream(params);
+          const anthropicStream = anthropic.messages.stream(sanitizedParams);
           for await (const event of anthropicStream) {
             res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
             flush();
@@ -769,7 +801,7 @@ router.post("/messages", async (req: Request, res: Response) => {
       }
 
       // Non-stream
-      const msg = await anthropic.messages.stream(params).finalMessage();
+      const msg = await anthropic.messages.stream(sanitizedParams).finalMessage();
       res.json(msg);
       return;
     }
