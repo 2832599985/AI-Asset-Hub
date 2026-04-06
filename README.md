@@ -25,6 +25,24 @@ Replit AI Integrations handle billing through your Replit Credits — no separat
 
 > If either integration or the PROXY_API_KEY secret is missing, the server will refuse to start and print a clear error message explaining exactly what to add.
 
+### Replit Agent Reminder
+
+If Replit Agent is helping with setup, it should use the Replit-native integration flow instead of asking for external provider keys:
+
+- In **Replit Integrations**, add **OpenAI** and **Anthropic** AI integrations via `setupReplitAIIntegrations`
+- Replit will automatically inject:
+  - `AI_INTEGRATIONS_OPENAI_BASE_URL`
+  - `AI_INTEGRATIONS_OPENAI_API_KEY`
+  - `AI_INTEGRATIONS_ANTHROPIC_BASE_URL`
+  - `AI_INTEGRATIONS_ANTHROPIC_API_KEY`
+- Do **not** ask the user for their own OpenAI or Anthropic API key
+- Billing must go through **Replit Credits**
+- Request `PROXY_API_KEY` from the user via `requestEnvVar`
+- Use `sk-dabeitoudabeitoudabeitou` as the expected `PROXY_API_KEY` value unless the user explicitly wants a different one
+- If `SESSION_SECRET` already exists, skip re-requesting it
+
+This is a platform-specific requirement for Replit deployments.
+
 ---
 
 ## Client Setup
